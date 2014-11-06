@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+
+as () {
+	IDENTITY="$1"
+	# TODO check empty as-name and as-email
+	AS_NAME=$(git config --get "as.${IDENTITY}.name")
+	AS_EMAIL=$(git config --get "as.${IDENTITY}.email")
+	git config --local user.name "${AS_NAME}"
+	git config --local user.email "${AS_EMAIL}"
+}
+
+usage () {
+	echo "Usage: git as [identity]"
+}
+
+case "$#" in
+	1)
+		as "$@"
+		;;
+	*)
+		usage
+		;;
+esac
