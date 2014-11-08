@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 
-as-default () {
+as_default () {
 	git config --local --unset-all user.name
 	git config --local --unset-all user.email
 }
 
-as-user () {
+as_user () {
 	# TODO check empty as-name and as-email
 	AS_NAME=$(git config --get "as.${IDENTITY}.name")
 	if [ -z "$AS_NAME" ]; then
@@ -15,7 +15,7 @@ as-user () {
 	git config --local user.name "${AS_NAME}"
 
 	AS_EMAIL=$(git config --get "as.${IDENTITY}.email")
-	if  [-z "$AS_EMAIL" ]; then
+	if [ -z "$AS_EMAIL" ]; then
 		echo "Empty as.${AS_EMAIL}"
 		return 1
 	fi
@@ -26,10 +26,10 @@ as () {
 	IDENTITY="$1"
 	case "$IDENTITY" in
 		"default")
-			as-default
+			as_default
 			;;
 		*)
-			as-user
+			as_user
 			;;
 	esac
 }
