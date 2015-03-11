@@ -1,48 +1,315 @@
-#!/usr/bin/env sh
+#!/usr/bin/env python3
+#
+# Copyright (C) 2015 Ahbong Chang
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""git-as helps you apply/clear groups of config.
+"""
 
-as_default () {
-	git config --local --unset-all user.name
-	git config --local --unset-all user.email
-}
+import argparse
+import re
+import subprocess
+import sys
 
-as_user () {
-	# TODO check empty as-name and as-email
-	AS_NAME=$(git config --get "as.${IDENTITY}.name")
-	if [ -z "$AS_NAME" ]; then
-		echo "Empty as.${AS_NAME}"
-		return 1
-	fi
-	git config --local user.name "${AS_NAME}"
 
-	AS_EMAIL=$(git config --get "as.${IDENTITY}.email")
-	if [ -z "$AS_EMAIL" ]; then
-		echo "Empty as.${AS_EMAIL}"
-		return 1
-	fi
-	git config --local user.email "${AS_EMAIL}"
-}
+CMD_GIT_CONFIG = ["git", "config"]
+CMD_GIT_CONFIG_LOCAL = CMD_GIT_CONFIG + ["--local"]
 
-as () {
-	IDENTITY="$1"
-	case "$IDENTITY" in
-		"default")
-			as_default
-			;;
-		*)
-			as_user
-			;;
-	esac
-}
 
-usage () {
-	echo "Usage: git as [identity]"
-}
+def piped(args, must_success=True):
+    """Piped subprocess."""
+    pipe = subprocess.PIPE
+    popen = subprocess.Popen(args, stdout=pipe, stderr=pipe)
+    out, err = popen.communicate()
+    ret = popen.returncode
+    if ret != 0 and must_success:
+        raise RuntimeError("code: {}, err: {}".format(ret, err.decode()))
+    return ret, out.decode(), err
 
-case "$#" in
-	1)
-		as "$@"
-		;;
-	*)
-		usage
-		;;
-esac
+
+def parse_entries(buf, terminator="\0"):
+    return buf.split(terminator)[:-1]
+
+def parse_kv_entries(buf, spliter="\n", terminator="\0"):
+    result = []
+    for entry in parse_entries(buf, terminator):
+        key, _, value = entry.partition(spliter)
+        if key == entry:
+            raise ValueError()
+        result.append((key, value))
+    return result
+
+
+class GitConfig:
+    """Wrapper for git-config."""
+
+    def __init__(self, cmd=None):
+        self._cmd = cmd if cmd is not None else ["git", "config"]
+
+    def _prepare_cmd(self, local=False):
+        """Prepare a basic git config command, with optional --local.
+        """
+        prepared_cmd = list(self._cmd)
+        if local:
+            prepared_cmd.append("--local")
+        return prepared_cmd
+
+    def _subcmd_name_revalue(self, subcmd, name, value_regex, local, null=False):
+        cmd = self._prepare_cmd(local)
+        if subcmd is not None:
+            cmd.append("--" + subcmd)
+        if null:
+            cmd.append("--null")
+        cmd.append(name)
+        if value_regex is not None:
+            cmd.append(value_regex)
+        return cmd
+
+    def set(self, name, value, value_regex, local=False):
+        """Run the following command and get the return code.
+        git config [--local] name value value_regex
+        """
+        cmd = self._prepare_cmd(local)
+        cmd += [name, value, value_regex]
+        ret, _, _ = piped(cmd)
+        return ret
+
+    def unset(self, name, value_regex=None, local=False):
+        """Run the following command and get the return code.
+        git config [--local] --unset name [value_regex]
+        """
+        cmd = self._subcmd_name_revalue("unset", name, value_regex, local)
+        ret, _, _ = piped(cmd)
+        return ret
+
+    def unset_all(self, name, value_regex=None, local=False):
+        """Run the following command adn get the return code
+        git config [--local] --unset-all name [value_regex]
+        """
+        cmd = self._subcmd_name_revalue("unset-all", name, value_regex, local)
+        ret, _, _ = piped(cmd)
+        return ret
+
+    def get(self, name, value_regex=None, local=False):
+        """Get exactly one value by name.
+        Returns None if no value with specific name exists.
+        """
+        cmd = self._subcmd_name_revalue("get", name, value_regex, local, null=True)
+        ret, out, _ = piped(cmd, must_success=False)
+        if ret == 0:
+            entries = parse_entries(out)
+            if len(entries) != 1:
+                raise ValueError()
+            return entries[0]
+
+    def get_all(self, name, value_regex=None, local=False):
+        """Get all values by name.
+        Returns None if there is no entry, or any error occured.
+        """
+        cmd = self._subcmd_name_revalue("get-all", name, value_regex, local, null=True)
+        ret, out, _ = piped(cmd, must_success=False)
+        if ret == 0:
+            return parse_entries(out)
+
+    def get_regexp(self, name_regex, local=False):
+        """Get all entries by regex.
+        Returns NOne if there is no entry, or any error occured.
+        """
+        fullcmd = self._prepare_cmd(local)
+        fullcmd += ["--null", "--get-regexp", name_regex]
+        ret, out, _ = piped(fullcmd, must_success=False)
+        if ret == 0:
+            return parse_kv_entries(out)
+
+
+GIT_CONFIG = GitConfig()
+
+
+class Message:
+    """Handles beautified multi-level messages."""
+
+    def __init__(self, out_file=None):
+        self._level = -1
+        self._firsts = []
+        self._out_file = out_file if out_file is not None else sys.stdout
+        self._first_box_msg_prefix = "+ "
+        self._first_msg_prefix = "|- "
+
+    def _level_prefix(self):
+        """Generate leveling prefix for each message."""
+        if self._level:
+            return "| " * self._level
+        return ""
+
+    def _group_prefix(self):
+        """Generate group prefix for each message."""
+        if self._firsts[-1]:
+            return self._first_box_msg_prefix
+        return self._first_msg_prefix
+
+    def single(self, message):
+        """Write single message."""
+        self.multi([message])
+
+    def multi(self, messages):
+        """Write multiple messages."""
+        if self._level < 0:
+            raise ValueError()
+        first = messages[0]
+        self._out_file.write("{}{}{}\n".format(self._level_prefix(), self._group_prefix(), first))
+        if len(messages) > 1:
+            raise ValueError("Not supported")
+        self._firsts[-1] = False
+
+    def section(self, func):
+        """Decorator for adding a level in that function scope."""
+        def _wrapper(*args, **kwargs):
+            """Decorated function."""
+            self._level += 1
+            self._firsts.append(True)
+            func(*args, **kwargs)
+            self._firsts.pop()
+            self._level -= 1
+        return _wrapper
+
+
+MESSAGE = Message()
+
+
+class Preset:
+    """A preset is a group of config that could be applied in one shot.
+    """
+
+    PREFIX_AS_APPLIED = "as.applied."
+    RE_PREFIX_AS_APPLIED = re.escape(PREFIX_AS_APPLIED)
+
+    PREFIX_AS_PRESET = "as.preset."
+    RE_PREFIX_AS_PRESET = re.escape(PREFIX_AS_PRESET)
+
+    @staticmethod
+    def all_applied_entries():
+        """Get all applied entries."""
+        name_regexp = "^" + Preset.RE_PREFIX_AS_APPLIED
+        applied = GIT_CONFIG.get_regexp(name_regexp, local=True)
+        return applied if applied is not None else []
+
+    @staticmethod
+    def all_applied_preset_names():
+        return set(key[11:] for key, _ in Preset.all_applied_entries())
+
+    @staticmethod
+    @MESSAGE.section
+    def clear_all():
+        """Clear all entries applied before.
+        """
+        applied_entries = Preset.all_applied_entries()
+
+        if not applied_entries:
+            MESSAGE.single("No entry applied by git-as.")
+            return
+
+        MESSAGE.single("Clearing all applied settings.")
+        for preset_name in Preset.all_applied_preset_names():
+            Preset(preset_name).clear()
+
+    def __init__(self, name):
+        self._name = name
+        self._prefix = "{}{}.".format(Preset.PREFIX_AS_PRESET, self._name)
+
+    def applicable_entries(self):
+        """Gets all entries in preset.
+        """
+        name_regex = "^{}".format(re.escape(self._prefix))
+        for key, value in GIT_CONFIG.get_regexp(name_regex):
+            yield key[len(self._prefix):], value
+
+    def applied_keys(self):
+        return GIT_CONFIG.get_all("{}{}".format(Preset.PREFIX_AS_APPLIED, self._name))
+
+    @MESSAGE.section
+    def apply(self):
+        """Apply this preset."""
+        # TODO check for replicating key.
+        # TODO handle error when preset not found.
+        MESSAGE.single("Applying preset {}".format(self._name))
+        for key, value in self.applicable_entries():
+            MESSAGE.single("Applying key \"{}\" to \"{}\"".format(key, value))
+            GIT_CONFIG.set(key, value, value, local=True)
+            GIT_CONFIG.set("as.applied.{}".format(self._name), key, key, local=True)
+
+    @MESSAGE.section
+    def clear(self):
+        """Clear the preset applied."""
+        MESSAGE.single("Clearing preset {}".format(self._name))
+        # TODO handle error when applied key not found.
+        for key in self.applied_keys():
+            MESSAGE.single("Clearing key {}".format(key))
+            GIT_CONFIG.unset(key, local=True)
+            GIT_CONFIG.unset("as.applied.{}".format(self._name), key, local=True)
+
+
+def as_preset(args):
+    """git as preset <names>"""
+    for name in args.names:
+        Preset(name).apply()
+
+
+def as_clear(args):
+    """git as clear <names>"""
+    if (args.all and args.names) or (not args.all and not args.names):
+        raise ValueError("Either --all or names must be provided.")
+    if args.all:
+        Preset.clear_all()
+    else:
+        for name in args.names:
+            Preset(name).clear()
+
+
+def arg_parser():
+    """Argument parser for git-as."""
+    parser = argparse.ArgumentParser(description="Apply git settings.")
+    subparsers = parser.add_subparsers(dest="subcommand", title="subcommands")
+
+    preset = subparsers.add_parser("preset", help="""
+        Apply git settings by predefined preset <name>
+    """)
+    preset.add_argument("names", nargs="+", metavar="name", help="""
+        The names of preset specified.
+    """)
+    preset.set_defaults(func=as_preset)
+
+    clear = subparsers.add_parser("clear", help="""
+        Clear git settings by predefined keys.
+    """)
+    clear.add_argument("names", nargs="*", metavar="name", help="""
+        The names of preset specified.
+    """)
+    clear.add_argument("--all", action="store_true")
+    clear.set_defaults(func=as_clear)
+
+    return parser
+
+
+def main():
+    """Entry point."""
+    parser = arg_parser()
+    args = parser.parse_args()
+    if args.subcommand is None:
+        parser.print_help()
+    else:
+        args.func(args)
+
+
+if __name__ == '__main__':
+    main()
