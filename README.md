@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/cwahbong/git-as.svg?branch=master)](https://travis-ci.org/cwahbong/git-as)
+
 git-as
 ======
 Apply or clear a bunch of settings in one command.
