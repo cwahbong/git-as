@@ -36,7 +36,7 @@ class GitTest(unittest.TestCase):
         self.assertEqual(sh.git.config("--null", "--local", "--get", name), value + "\0")
 
     def assertGitConfigEmpty(self, name):
-        with self.assertRaises(sh.ErrorReturnCode, msg="Should be empty"):
+        with self.assertRaises(sh.ErrorReturnCode_1, msg="Should be empty"):
             sh.git.config("--null", "--local", "--get", name)
 
 
