@@ -1,0 +1,6 @@
+language: python
+python:
+- "3.3"
+- "3.4"
+install: pip install --pre -r requirements.txt
+script: nose2
