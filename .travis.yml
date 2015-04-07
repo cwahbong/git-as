@@ -2,5 +2,5 @@ language: python
 python:
 - "3.3"
 - "3.4"
-install: pip install --pre -r requirements.txt && make install
+install: pip install --pre -r requirements.txt && sudo make install
 script: nose2
