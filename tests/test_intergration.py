@@ -4,8 +4,6 @@ import os
 import tempfile
 import unittest
 
-# pylint will complain about for sh.*
-# pylint: disable=no-member
 import sh
 
 class GitTest(unittest.TestCase):
