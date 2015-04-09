@@ -41,8 +41,9 @@ class GitTest(unittest.TestCase):
 class FixedPreset(GitTest):
     """Test case with predefined presets.
 
-    Subclass instances should set _preset by themselves.
+    Subclass instances could set _preset by themselves.
     """
+    _preset = {}
 
     def setUp(self):
         super().setUp()
