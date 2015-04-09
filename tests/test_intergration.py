@@ -6,7 +6,9 @@ import unittest
 
 import sh
 
+
 class GitTest(unittest.TestCase):
+
     """Test case that needs a git repository.
     """
 
@@ -31,9 +33,11 @@ class GitTest(unittest.TestCase):
         self._dir_repo.cleanup()
 
     def assertGitConfigEqual(self, name, value):
+        """Checks that git local config name has that value."""
         self.assertEqual(sh.git.config("--null", "--local", "--get", name), value + "\0")
 
     def assertGitConfigEmpty(self, name):
+        """Checks that git local config name has no value."""
         with self.assertRaises(sh.ErrorReturnCode_1, msg="Should be empty"):
             sh.git.config("--null", "--local", "--get", name)
 
@@ -74,3 +78,15 @@ class Simple(FixedPreset):
         self.assertGitConfigEmpty("as.applied.simpletest")
         self.assertGitConfigEmpty("section.abcd")
 
+
+class NoIntersection(FixedPreset):
+
+    _preset = {
+        "first.section.name": "value",
+        "second.section.name": "value",
+    }
+
+    def test(self):
+        with self.assertRaises(sh.ErrorReturnCode):
+            sh.git_as.preset("first", "second")
+        self.assertGitConfigEmpty("section.name")

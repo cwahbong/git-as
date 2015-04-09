@@ -240,9 +240,9 @@ class Preset:
     @MESSAGE.section
     def apply(self):
         """Apply this preset."""
-        # TODO check for replicating key.
         # TODO handle error when preset not found.
         MESSAGE.single("Applying preset {}".format(self._name))
+
         for key, value in self.applicable_entries():
             MESSAGE.single("Applying key \"{}\" to \"{}\"".format(key, value))
             GIT_CONFIG.set(key, value, value, local=True)
@@ -259,10 +259,28 @@ class Preset:
             GIT_CONFIG.unset("as.applied.{}".format(self._name), key, local=True)
 
 
+def duplicate(iterable):
+    uniques = set()
+    for item in iterable:
+        if item in uniques:
+            return True
+        uniques.add(item)
+    return False
+
+
 def as_preset(args):
     """git as preset <names>"""
-    for name in args.names:
-        Preset(name).apply()
+    presets = list(Preset(name) for name in args.names)
+
+    values = []
+    for preset in presets:
+        for entry in preset.applicable_entries():
+            values.append(entry[0])
+    if duplicate(values):
+        sys.exit(1)
+
+    for preset in presets:
+        preset.apply()
 
 
 def as_clear(args):
