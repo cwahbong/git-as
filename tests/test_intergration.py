@@ -38,17 +38,24 @@ class GitTest(unittest.TestCase):
             sh.git.config("--null", "--local", "--get", name)
 
 
-class GitAsSimpleTest(GitTest):
-    """Test case with a preset with only one key-value.
+class FixedPreset(GitTest):
+    """Test case with predefined presets.
+
+    Subclass instances should set _preset by themselves.
     """
-    _preset = {
-        "simpletest.section.abcd": "dbca"
-    }
 
     def setUp(self):
         super().setUp()
         for name, value in self._preset.items():
             sh.git.config("--local", "as.preset.{}".format(name), value)
+
+
+class Simple(FixedPreset):
+    """Test case with a preset with only one key-value.
+    """
+    _preset = {
+        "simpletest.section.abcd": "dbca"
+    }
 
     def test_apply(self):
         sh.git_as.preset("simpletest")
