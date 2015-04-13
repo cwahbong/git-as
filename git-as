@@ -23,10 +23,6 @@ import subprocess
 import sys
 
 
-CMD_GIT_CONFIG = ["git", "config"]
-CMD_GIT_CONFIG_LOCAL = CMD_GIT_CONFIG + ["--local"]
-
-
 def piped(args, must_success=True):
     """Piped subprocess."""
     pipe = subprocess.PIPE
@@ -40,6 +36,7 @@ def piped(args, must_success=True):
 
 def parse_entries(buf, terminator="\0"):
     return buf.split(terminator)[:-1]
+
 
 def parse_kv_entries(buf, spliter="\n", terminator="\0"):
     result = []
@@ -57,55 +54,43 @@ class GitConfig:
     def __init__(self, cmd=None):
         self._cmd = cmd if cmd is not None else ["git", "config"]
 
-    def _prepare_cmd(self, local=False):
-        """Prepare a basic git config command, with optional --local.
-        """
-        prepared_cmd = list(self._cmd)
-        if local:
-            prepared_cmd.append("--local")
-        return prepared_cmd
+    def local(self):
+        return GitConfig(self._cmd + ["--local"])
 
-    def _subcmd_name_revalue(self, subcmd, name, value_regex, local, null=False):
-        cmd = self._prepare_cmd(local)
-        if subcmd is not None:
-            cmd.append("--" + subcmd)
+    def _subcmd_name_revalue(self, subcmd, name, value_regex, null=False):
+        cmd = list(self._cmd)
         if null:
             cmd.append("--null")
+        if subcmd is not None:
+            cmd.append("--" + subcmd)
         cmd.append(name)
         if value_regex is not None:
             cmd.append(value_regex)
         return cmd
 
-    def set(self, name, value, value_regex, local=False):
-        """Run the following command and get the return code.
+    def set(self, name, value, value_regex):
+        """Run the following command.
         git config [--local] name value value_regex
         """
-        cmd = self._prepare_cmd(local)
-        cmd += [name, value, value_regex]
-        ret, _, _ = piped(cmd)
-        return ret
+        piped(self._cmd + [name, value, value_regex])
 
-    def unset(self, name, value_regex=None, local=False):
-        """Run the following command and get the return code.
+    def unset(self, name, value_regex=None):
+        """Run the following command.
         git config [--local] --unset name [value_regex]
         """
-        cmd = self._subcmd_name_revalue("unset", name, value_regex, local)
-        ret, _, _ = piped(cmd)
-        return ret
+        piped(self._subcmd_name_revalue("unset", name, value_regex))
 
-    def unset_all(self, name, value_regex=None, local=False):
+    def unset_all(self, name, value_regex=None):
         """Run the following command adn get the return code
         git config [--local] --unset-all name [value_regex]
         """
-        cmd = self._subcmd_name_revalue("unset-all", name, value_regex, local)
-        ret, _, _ = piped(cmd)
-        return ret
+        piped(self._subcmd_name_revalue("unset-all", name, value_regex))
 
-    def get(self, name, value_regex=None, local=False):
+    def get(self, name, value_regex=None):
         """Get exactly one value by name.
         Returns None if no value with specific name exists.
         """
-        cmd = self._subcmd_name_revalue("get", name, value_regex, local, null=True)
+        cmd = self._subcmd_name_revalue("get", name, value_regex, null=True)
         ret, out, _ = piped(cmd, must_success=False)
         if ret == 0:
             entries = parse_entries(out)
@@ -113,22 +98,22 @@ class GitConfig:
                 raise ValueError()
             return entries[0]
 
-    def get_all(self, name, value_regex=None, local=False):
+    def get_all(self, name, value_regex=None):
         """Get all values by name.
         Returns None if there is no entry, or any error occured.
         """
-        cmd = self._subcmd_name_revalue("get-all", name, value_regex, local, null=True)
+        cmd = self._subcmd_name_revalue("get-all", name, value_regex, null=True)
         ret, out, _ = piped(cmd, must_success=False)
         if ret == 0:
             return parse_entries(out)
 
-    def get_regexp(self, name_regex, local=False):
+    def get_regexp(self, name_regex):
         """Get all entries by regex.
-        Returns NOne if there is no entry, or any error occured.
+        Returns None if there is no entry, or any error occured.
         """
-        fullcmd = self._prepare_cmd(local)
-        fullcmd += ["--null", "--get-regexp", name_regex]
-        ret, out, _ = piped(fullcmd, must_success=False)
+        cmd = list(self._cmd)
+        cmd += ["--null", "--get-regexp", name_regex]
+        ret, out, _ = piped(cmd, must_success=False)
         if ret == 0:
             return parse_kv_entries(out)
 
@@ -201,7 +186,7 @@ class Preset:
     def all_applied_entries():
         """Get all applied entries."""
         name_regexp = "^" + Preset.RE_PREFIX_AS_APPLIED
-        applied = GIT_CONFIG.get_regexp(name_regexp, local=True)
+        applied = GIT_CONFIG.local().get_regexp(name_regexp)
         return applied if applied is not None else []
 
     @staticmethod
@@ -245,8 +230,8 @@ class Preset:
 
         for key, value in self.applicable_entries():
             MESSAGE.single("Applying key \"{}\" to \"{}\"".format(key, value))
-            GIT_CONFIG.set(key, value, value, local=True)
-            GIT_CONFIG.set("as.applied.{}".format(self._name), key, key, local=True)
+            GIT_CONFIG.local().set(key, value, value)
+            GIT_CONFIG.local().set("as.applied.{}".format(self._name), key, key)
 
     @MESSAGE.section
     def clear(self):
@@ -255,8 +240,8 @@ class Preset:
         # TODO handle error when applied key not found.
         for key in self.applied_keys():
             MESSAGE.single("Clearing key {}".format(key))
-            GIT_CONFIG.unset(key, local=True)
-            GIT_CONFIG.unset("as.applied.{}".format(self._name), key, local=True)
+            GIT_CONFIG.local().unset(key)
+            GIT_CONFIG.local().unset("as.applied.{}".format(self._name), key)
 
 
 def duplicate(iterable):
